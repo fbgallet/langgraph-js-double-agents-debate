@@ -1,7 +1,8 @@
 {
-  "node_version": "20",
+  "dockerfile_lines": [],
   "graphs": {
-    "agent": "./src/agent/graph.ts:graph"
+    "Auto-conversation Agent": "./src/agent/graph.ts:simulation"
   },
-  "env": ".env"
+  "env": ".env",
+  "node_version": "20"
 }
