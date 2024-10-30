@@ -51,9 +51,17 @@ export const StateAnnotation = Annotation.Root({
 export type State = typeof StateAnnotation.State;
 export type Update = typeof StateAnnotation.Update;
 
-const config = { streamMode: "values" as const };
+type AvailableModels = "gpt-4o-mini" | "gpt-4o" | "claude-3-5-sonnet-20241022";
+export const defaultModel = "gpt-4o-mini";
 
-export const workflow = new StateGraph(StateAnnotation)
+const ConfigurableAnnotation = Annotation.Root({
+  moderatorModel: Annotation<AvailableModels>,
+  bot1Model: Annotation<AvailableModels>,
+  bot2Model: Annotation<AvailableModels>,
+  botsOnly: Annotation<boolean>,
+});
+
+export const workflow = new StateGraph(StateAnnotation, ConfigurableAnnotation)
   // node pour définir le thème et les rôle,
   // qui boucle tant que le thème n'a pas été bien défini
   .addNode("Initialization", initialization)

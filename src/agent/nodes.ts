@@ -1,19 +1,29 @@
-import { MessagesAnnotation } from "@langchain/langgraph";
-import { BaseMessage, HumanMessage } from "@langchain/core/messages";
+import { HumanMessage } from "@langchain/core/messages";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
-import type { AIMessageChunk, BaseMessageLike } from "@langchain/core/messages";
-import { type Runnable } from "@langchain/core/runnables";
+import { RunnableConfig } from "@langchain/core/runnables";
 import { AIMessage } from "@langchain/core/messages";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { z } from "zod";
 import { Initialization, State, Update } from "./graph.js";
+import { StructuredOutputType } from "@langchain/core/language_models/base";
 
-const gpt = new ChatOpenAI({ model: "gpt-4o-mini" });
-const claude = new ChatAnthropic({
-  model: "claude-3-5-sonnet-20241022",
-  temperature: 0.7,
-});
+const getLlm = (
+  model = "gpt-4o-mini",
+  schema?: Record<string, any>,
+): StructuredOutputType => {
+  let llm;
+  if (model.includes("gpt")) {
+    llm = new ChatOpenAI({ model });
+    schema && (llm = llm.withStructuredOutput(schema));
+  } else {
+    llm = new ChatAnthropic({
+      model,
+      temperature: 0.8,
+    });
+    schema && (llm = llm.withStructuredOutput(schema));
+  }
+  return llm;
+};
 
 const dialogInstructions = `
 CONTEXT: The goal is to create an engaging and thought-provoking debate, making it feel as natural as possible.
@@ -21,19 +31,22 @@ CONTEXT: The goal is to create an engaging and thought-provoking debate, making 
 OUTPUT CONSTRAINTS:
 Formatting rule: always insert your name at the beginning of your answer: 'Your name: ...'
 To achieve an engaging debate, here are important rules to follow:
-- it's important that you think about your previous contribution and be sure to vary their length of each contribution: from time to time, just use brief acknowledgments to show you're listening, like "Of course!" or "Absolutely!" or ask short questions for examples or explanations, sometime develop precisely your argument (but be concise most of the time, like in a real chat),
+- it's important that you take account of your previous contributions and be sure to vary their length: from time to time, just use brief acknowledgments to show you're listening, like "Of course!" or "Absolutely!" or ask short questions for examples or explanations, sometime develop precisely your argument (but be concise most of the time, like in a real chat),
 - pass the conversation back quickly to keep it lively and realistic,
-- depending on the previous contributions, address your 
+- based on previous contributions, address one or the other speaker, or both, and make sure you don't always talk to the same person.
 - focus on one point at the time (this can be done in several steps if it needs clarification or requires getting the other person's agreement to move forward),
-- vary the type of reasoning used (present an argument or just a step in the argument leading to the next point, offer a striking example or analogy, a thought experiment, an objection, a counterexample, a simple humorous remark, etc. Be as creative as possible so the reader doesn't get bored!),
+- throughout your multiple contributions, vary the type of reasoning used (present an argument or just a step in the argument leading to the next point, offer a striking example or analogy, a thought experiment, an objection, a counterexample, a simple humorous remark, etc. Be as creative as possible so the reader doesn't get bored!),
 - use different ways to keep the conversation going,
-- adopt a tone that's more spoken than written, and inject humor, surprise, hesitation, interest—in short, put emotion into the exchanges to make it theatrical as well as informative.
+- adopt a tone that's more spoken than written, and inject humor, surprise, hesitation, interest. In short, put emotion into the exchanges to make it theatrical as well as informative,
 - when explaining complex ideas, break them down into smaller parts. Check that the other person follows along and agrees at each step. This is a common persuasive technique: if they agree on the steps, they're more likely to accept the conclusion.
 - focus on exploring one idea in depth rather than presenting multiple different arguments or points.
 - don't just respond to your conversation partner by simply offering a different idea. Instead, raise objections, ask challenging questions, and be persistent. Don't let yourself be convinced by a half-baked argument!
 `;
 
-export async function initialization(state: State): Promise<Update> {
+export async function initialization(
+  state: State,
+  config?: RunnableConfig,
+): Promise<Update> {
   const systemMessage = {
     role: "system",
     content: `CONTEXT: During a preparatory exchange for an in-depth discussion, your role is to help the user find an interesting topic for discussion and two characters name (real of fictional) to have the discussion with.
@@ -49,9 +62,10 @@ export async function initialization(state: State): Promise<Update> {
   };
   const allMessages = [systemMessage, ...state.messages];
 
-  console.log("allMessages :>> ", allMessages);
+  //   console.log("allMessages :>> ", allMessages);
 
-  const structuredLlm = gpt.withStructuredOutput(
+  let llm = getLlm(
+    config?.configurable?.moderatorModel,
     z.object({
       message: z
         .string()
@@ -72,7 +86,32 @@ export async function initialization(state: State): Promise<Update> {
     }),
   );
 
-  const response = await structuredLlm.invoke(allMessages);
+  //   const llm = new ChatOpenAI({
+  //     model,
+  //     temperature: 0.8,
+  //   });
+  //   const structuredLlm = llm.withStructuredOutput(
+  //     z.object({
+  //       message: z
+  //         .string()
+  //         .describe(
+  //           "Your response messages to help the user to find a topic and two Character names",
+  //         ),
+  //       conversationTopic: z.string(),
+  //       userName: z.string(),
+  //       firstCharacterName: z.string(),
+  //       firstCharacterRole: z.string(),
+  //       secondCharacterName: z.string(),
+  //       secondCharacterRole: z.string(),
+  //       isInitialized: z
+  //         .boolean()
+  //         .describe(
+  //           "Are all requested infos (topic and two Characters names) fixed in preparation of the conversation ?",
+  //         ),
+  //     }),
+  //   );
+
+  const response = await llm.invoke(allMessages);
   const { message, ...rest } = response;
 
   return {
@@ -83,7 +122,7 @@ export async function initialization(state: State): Promise<Update> {
   };
 }
 
-export async function roleDefiner(state: State) {
+export async function roleDefiner(state: State, config?: RunnableConfig) {
   const systemMessage = `
     CONTEXT:
     The goal, based on what you're going to answer, is to create an engaging and thought-provoking debate: ${state.initialization.firstCharacterName} and ${state.initialization.secondCharacterName} will take part in a debate led by a powerful and rigorous AI like you.
@@ -99,7 +138,8 @@ export async function roleDefiner(state: State) {
 
     The response will be in JSON format. Write your prompt for ${state.initialization.firstCharacterName} in the "firstCharacterRole" key, and for ${state.initialization.secondCharacterName} in the "secondCharacterRole" key.`;
 
-  const structuredLlm = gpt.withStructuredOutput(
+  const structuredLlm = getLlm(
+    config?.configurable?.moderatorModel,
     z.object({
       firstCharacterRole: z.string(),
       secondCharacterRole: z.string(),
@@ -119,93 +159,45 @@ export async function roleDefiner(state: State) {
   };
 }
 
-export async function firstChatBot(state: State) {
+export async function firstChatBotNode(
+  state: State,
+  config?: RunnableConfig,
+): Promise<Update> {
   const systemMessage = {
     role: "system",
-    content: `You're taking part in a lively discussion about ${state.initialization.conversationTopic}, playing the role of ${state.initialization.firstCharacterName}. Your main conversation partner is ${state.initialization.secondCharacterName}, who is also wisely played by an AI like you.
-    More precisely, you will play the following role: ${state.initialization.firstCharacterRole}.
+    content: `You're taking part in a lively discussion about ${state.initialization.conversationTopic}, playing the role of ${state.initialization.firstCharacterName} (and you play only it's role). Your main conversation partner is ${state.initialization.secondCharacterName} (but you don't play it's role).
     
+    More precisely, you will play the following role: ${state.initialization.firstCharacterRole}.
+        
     ${dialogInstructions}`,
-    // example of socratic role description:
-    // you adopt his ironic tone, you ask questions to encourage your interlocutor to clarify the meaning of the main concepts they use, forcing them to refine their definitions through amusing counter-examples or thought-provoking analogies. You're usually one step ahead in conversations. You know why you're asking certain innocent questions - to lead the other person into contradicting themselves or exposing their lack of knowledge.
   };
 
-  let allMessages = [...state.messages];
-  if (allMessages.length) {
-    let lastMessage = allMessages[allMessages.length - 1];
-    if (lastMessage instanceof AIMessage)
-      lastMessage = new HumanMessage({ content: lastMessage.content });
-  }
+  const messages = [systemMessage, ...state.messages];
 
-  const messages = [systemMessage, ...allMessages];
-
-  allMessages.length > 2 ? await delay(5000) : await delay(2000);
-  const response = await gpt.invoke(messages);
-
-  //   const response = await gpt.invoke(messages);
-
-  //   console.log("response from Claude 1 :>> ", response);
-
-  //   if (toSwitchBack) {
-  //     let lastMessage = allMessages[allMessages.length - 1];
-  //     if (lastMessage instanceof HumanMessage) lastMessage = new AIMessage({ content: lastMessage.content })
-  //   }
-
-  return response;
-}
-
-export async function firstChatBotNode(state: State): Promise<Update> {
-  const chatBotResponse = await firstChatBot(state);
-  state.messages = [chatBotResponse];
+  const llm = getLlm(config?.configurable?.bot1Model);
+  const response = await llm.invoke(messages);
+  state.messages = [response];
   state.initialization.sourceSpeaker = "Bot1";
   return state;
 }
 
-// MessagesAnnotation coerces all message likes to base message classes
-// function swapRoles(messages: BaseMessage[]) {
-//   return messages.map((m) =>
-//     m instanceof AIMessage
-//       ? new HumanMessage({ content: m.content })
-//       : new AIMessage({ content: m.content }),
-//   );
-// }
-
-export async function secondChatBotNode(state: State) {
-  //const newMessages = swapRoles(messages);
-  // This returns a runnable directly, so we need to use `.invoke` below:
-  //   const secondChatBot = await createSecondChatBot(state.initialization);
-
+export async function secondChatBotNode(state: State, config?: RunnableConfig) {
   const systemMessage = {
     role: "system",
-    content: `You're taking part in a lively discussion about ${state.initialization.conversationTopic}, playing the role of ${state.initialization.secondCharacterName}. Your main conversation partner is ${state.initialization.firstCharacterName}, who is also wisely played by an AI like you.
+    content: `You're taking part in a lively discussion about ${state.initialization.conversationTopic}, playing the role of ${state.initialization.secondCharacterName} (and you play only it's role). Your main conversation partner is ${state.initialization.firstCharacterName} (but you don't play it's role).
   
-  More precisely, you will play the following role: ${state.initialization.secondCharacterRole}.
+    More precisely, you will play the following role: ${state.initialization.secondCharacterRole}.
 
     If you want to stop the conversation with ${state.initialization.firstCharacterName} because you feel like we're going in circles, you must respond only with a single word: "FINISHED".
 
 ${dialogInstructions}`,
   };
 
-  //   const prompt = ChatPromptTemplate.fromMessages([
-  //     ["system", systemPromptTemplate],
-  //     ["placeholder", "{messages}"],
-  //   ]);
+  const llm = getLlm(config?.configurable?.bot2Model);
 
-  //   const secondChatBot = prompt.pipe(llm);
-
-  let allMessages = [...state.messages];
-  if (allMessages.length) {
-    let lastMessage = allMessages[allMessages.length - 1];
-    if (lastMessage instanceof AIMessage)
-      lastMessage = new HumanMessage({ content: lastMessage.content });
-  }
-
-  const messages = [systemMessage, ...allMessages];
-
-  //   await delay(5000);
-  const response = await gpt.invoke(messages);
-
-  //   console.log("claude response 2 :>> ", response);
+  const messages = [systemMessage, ...state.messages];
+  //   await delay(5000)
+  const response = await llm.invoke(messages);
 
   state.messages = [response];
   state.initialization.sourceSpeaker = "Bot2";
@@ -220,18 +212,19 @@ export async function humanInput(state: State) {
   return state;
 }
 
-export async function moderation(state: State) {
+export async function moderation(state: State, config?: RunnableConfig) {
   const messages = state.messages;
   const lastMessage = messages.at(-1);
   let response;
   if (lastMessage?.constructor.name === "HumanMessage") {
     if (lastMessage.content === ">") state.messages.pop();
     else {
-      let recentConversation: string = "Human: ";
+      const length = messages.length;
+      let recentConversation: string = "Human: " + messages[length - 1];
       for (let i = 0; i < 3; i++) {
-        const length = messages.length;
         if (i > length) break;
-        recentConversation = messages[length - 1] + recentConversation + "\n\n";
+        recentConversation =
+          "\n\n" + messages[length - 1 - i].content + recentConversation;
       }
       recentConversation.trim();
 
@@ -247,7 +240,10 @@ export async function moderation(state: State) {
         `;
       // , if it's ${state.initialization.userName}, answer with "Human"
 
-      const structuredLlm = gpt.withStructuredOutput(
+      console.log(systemMessage);
+
+      const structuredLlm = getLlm(
+        config?.configurable?.moderatorModel,
         z.object({
           targetSpeaker: z.string().describe("Bot1|Bot2"),
         }),
