@@ -17,3 +17,6 @@ dist
 .env
 .ipynb_checkpoints
 
+tests
+.github/workflows
+
