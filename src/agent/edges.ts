@@ -7,26 +7,17 @@ let round = 0;
 export function initOrContinue(state: State) {
   //   const messages = state.messages;
   //   console.log("State from initOrContinue", state);
-  if (state.initialization?.isInitialized) return "Bot1";
+  if (state.debateSettings?.isInitialized) return "Bot1";
   else {
-    return "Initialization";
+    return "DebateSetting";
   }
 }
 
 export function nextSpeaker(state: State) {
-  console.log(
-    "state.initialization.sourceSpeaker :>> ",
-    state.initialization.sourceSpeaker,
-  );
-  console.log(
-    "state.initialization.targetSpeaker :>> ",
-    state.initialization.targetSpeaker,
-  );
-  if (state.initialization.sourceSpeaker === "Human")
-    return state.initialization.targetSpeaker;
+  if (state.turn.sourceSpeaker === "Human") return state.turn.targetSpeaker;
   else {
-    if (state.initialization.sourceSpeaker === "Bot1") return "Bot2";
-    if (state.initialization.sourceSpeaker === "Bot2") return "Bot1";
+    if (state.turn.sourceSpeaker === "Bot1") return "Bot2";
+    if (state.turn.sourceSpeaker === "Bot2") return "Bot1";
     return "__end__";
   }
 }
@@ -34,8 +25,8 @@ export function nextSpeaker(state: State) {
 export function verifyInitialization(state: typeof StateAnnotation.State) {
   //   const messages = state.messages;
   console.log("state :>> ", state);
-  if (state.initialization?.isInitialized) {
-    return "RoleDefiner";
+  if (state.debateSettings?.isInitialized) {
+    return "CharacterDefiner";
   } else {
     return "__end__";
   }

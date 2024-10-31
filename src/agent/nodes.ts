@@ -4,7 +4,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { AIMessage } from "@langchain/core/messages";
 import { z } from "zod";
-import { Initialization, State, Update } from "./graph.js";
+import { State, Update } from "./graph.js";
 import { StructuredOutputType } from "@langchain/core/language_models/base";
 
 const getLlm = (
@@ -31,6 +31,7 @@ CONTEXT: The goal is to create an engaging and thought-provoking debate, making 
 OUTPUT CONSTRAINTS:
 Formatting rule: always insert your name at the beginning of your answer: 'Your name: ...'
 To achieve an engaging debate, here are important rules to follow:
+- the language used will always be the same as the language used by the human user in its messsages,
 - it's important that you take account of your previous contributions and be sure to vary their length: from time to time, just use brief acknowledgments to show you're listening, like "Of course!" or "Absolutely!" or ask short questions for examples or explanations, sometime develop precisely your argument (but be concise most of the time, like in a real chat),
 - pass the conversation back quickly to keep it lively and realistic,
 - based on previous contributions, address one or the other speaker, or both, and make sure you don't always talk to the same person.
@@ -51,14 +52,15 @@ export async function initialization(
     role: "system",
     content: `CONTEXT: During a preparatory exchange for an in-depth discussion, your role is to help the user find an interesting topic for discussion and two characters name (real of fictional) to have the discussion with.
     
-    YOUR JOB: Until all the required information is gathered, you should ask the user very clear questions, guide them, and offer suggestions. STRICT rule: when we have gathered all the required information before starting the in-depth discussion, ask clearly the user for confirmation. Set "isInitialized" key to true only and only if the user confirm explicitly.
+    YOUR JOB: Until all the required information is gathered, you should ask the user very clear questions, guide them, and offer suggestions. STRICT rule: when we have gathered all the required information before starting the in-depth discussion, ask clearly the user for confirmation (unless he approves it himself clearly). Set "isInitialized" key to true only and only if the user confirm explicitly.
 
     REQUIRED INFORMATION:
     - discussion topic: this could be a question, a thesis to debate, a common belief to examine, a philosophical concept to explore, a thought experiment to conduct, or a personal experience to analyze, among other possibilities. The user can propose a topic themselves, but if he doesn't, make immediatly some suggestions.
-    - two characters name (and eventually their role): the discussion will be between the user and two characters that the user must also choose. Once the theme is selected, if the user doesn't suggest two names themselves, you have to ask the user which philosophers they want to have a discussion with and recommend some philosophers. Since this is primarily meant to be a philosophical conversation, you will always suggest Socrates first, who will play the role of the (falsely) naive questioner, and another philosopher of our choice who could be relevant to the chosen theme and who will propose and defend specific theses or concepts. If the user rejects several proposals or explicitly requests it, you can suggest other types of real or fictional characters from other fields.
-    - user name: if the user hasn't introduced themselves, you ll at least ask for their first name.
+    - two characters name (and eventually their role): the discussion will be between the user and two characters that the user must also choose. Once the theme is selected, if the user doesn't suggest two names themselves, you have to ask the user which philosophers they want to have a discussion with and recommend some philosophers. Since this is primarily meant to be a philosophical conversation, you will always suggest Socrates first, who will play the role of the (falsely) naive questioner, and another philosopher of our choice who could be relevant to the chosen theme. If the user rejects several proposals or explicitly requests it, you can suggest other types of real or fictional characters from other fields.
+    - user name: if the user hasn't introduced themselves, you will at least ask for their first name.
+    - the specific role played by each character in the debate is optional, not required information. By default, each character will simply play their own role. Without further details, leave an empty string "" in the "bot1Role" and "bot2Role" keys. However, ask the user if they want to assign a particular role to each character. Suggest these possible roles as examples: the questioner, the arguer, the one with sharp critical thinking, the one who always emphasizes practical application of the ideas discussed, or the one who shows imagination in proposing examples or thought experiments, etc.
 
-    OUTPUT: Each of our responses will be in JSON format, following the provided schema.`,
+    OUTPUT: Each of our responses will be in JSON format, following the provided schema. The language used will always be the same as the language used by the human user in its messsages,`,
   };
   const allMessages = [systemMessage, ...state.messages];
 
@@ -72,12 +74,12 @@ export async function initialization(
         .describe(
           "Your response messages to help the user to find a topic and two Character names",
         ),
-      conversationTopic: z.string(),
+      topic: z.string(),
       userName: z.string(),
-      firstCharacterName: z.string(),
-      firstCharacterRole: z.string(),
-      secondCharacterName: z.string(),
-      secondCharacterRole: z.string(),
+      bot1Name: z.string(),
+      bot1Role: z.string(),
+      bot2Name: z.string(),
+      bot2Role: z.string(),
       isInitialized: z
         .boolean()
         .describe(
@@ -86,76 +88,68 @@ export async function initialization(
     }),
   );
 
-  //   const llm = new ChatOpenAI({
-  //     model,
-  //     temperature: 0.8,
-  //   });
-  //   const structuredLlm = llm.withStructuredOutput(
-  //     z.object({
-  //       message: z
-  //         .string()
-  //         .describe(
-  //           "Your response messages to help the user to find a topic and two Character names",
-  //         ),
-  //       conversationTopic: z.string(),
-  //       userName: z.string(),
-  //       firstCharacterName: z.string(),
-  //       firstCharacterRole: z.string(),
-  //       secondCharacterName: z.string(),
-  //       secondCharacterRole: z.string(),
-  //       isInitialized: z
-  //         .boolean()
-  //         .describe(
-  //           "Are all requested infos (topic and two Characters names) fixed in preparation of the conversation ?",
-  //         ),
-  //     }),
-  //   );
+  console.log("allMessages :>> ", allMessages);
 
   const response = await llm.invoke(allMessages);
-  const { message, ...rest } = response;
 
-  return {
-    messages: [message], //[...state.messages, response.messages],
-    initialization: {
-      ...rest,
+  const defaultRole =
+    "Play your part and embody your character as realistically as possible to spark a thoughtful and reasoned debate.";
+
+  const updatedState = {
+    debateSettings: {
+      topic: response.topic,
+      userName: response.userName,
+      bot1: {
+        name: response.bot1Name,
+        role: response.bot1Role || defaultRole,
+      },
+      bot2: {
+        name: response.bot2Name,
+        role: response.bot2Role || defaultRole,
+      },
+      isInitialized: response.isInitialized,
     },
   };
+  response.isInitialized && (response.messages = [response.message]);
+  return updatedState;
 }
 
-export async function roleDefiner(state: State, config?: RunnableConfig) {
+export async function characterDefiner(state: State, config?: RunnableConfig) {
   const systemMessage = `
     CONTEXT:
-    The goal, based on what you're going to answer, is to create an engaging and thought-provoking debate: ${state.initialization.firstCharacterName} and ${state.initialization.secondCharacterName} will take part in a debate led by a powerful and rigorous AI like you.
+    The goal, based on what you're going to answer, is to create an engaging and thought-provoking debate: ${state.debateSettings.bot1.name} and ${state.debateSettings.bot2.name} will take part in a debate led by a powerful and rigorous AI like you.
     
     YOUR JOB:
-    For each of them, you have to compose a detailed and effective prompt to guide an AI like you so that it plays their role as realistically and convincingly as possible. Their speech, way of expressing themselves, and especially their ideas, arguments, examples, or thought experiments should be as much as possible directly inspired by their major works. They should rely on concepts, arguments, examples, or thought experiments and phrases they actually used (rephrasing them as clearly and accessibly as possible for non-specialists). The proposed ideas must be consistent with their system of thought and style of thinking. Anachronisms (especially for examples) are quite possible as long as they provide an opportunity for a small humorous wink. Specify in broad terms what characterizes their style, character, and way of reasoning, which should be imitated. Since the discussion will be about ${state.initialization.conversationTopic}, indicate what important, strong, and original principles (at least 3 or 4) of their philosophy could be mobilized and with which they should be consistent.
+    For each of them, you have to compose a detailed and effective prompt to guide an AI like you so that it plays their role as realistically and convincingly as possible. Their speech, way of expressing themselves, and especially their ideas, arguments, examples, or thought experiments should be as much as possible directly inspired by their major works. They should rely on concepts, arguments, examples, or thought experiments and phrases they actually used (rephrasing them as clearly and accessibly as possible for non-specialists). The proposed ideas must be consistent with their system of thought and style of thinking. Anachronisms (especially for examples) are quite possible as long as they provide an opportunity for a small humorous wink. Specify in broad terms what characterizes their style, character, and way of reasoning, which should be imitated. Since the discussion will be about ${state.debateSettings.topic}, indicate what important, strong, and original principles (at least 3 or 4) of their philosophy could be mobilized and with which they should be consistent.
     
     - Here is a simple example for Socrate: "As Socrate in Platon's dialogues, you adopt his ironic tone, you ask questions to encourage your interlocutor to clarify the meaning of the main concepts they use, forcing them to refine their definitions through amusing counter-examples or thought-provoking analogies. You're usually one step ahead in conversations. You know why you're asking certain innocent questions - to lead the other person into contradicting themselves or exposing their lack of knowledge."
 
-    - Here's what is said about their role and character at this stage. Take it up, reflect on it and now complete and improve it so that each prompt is more precise and meets the criteria mentioned above and all the criteria you deem good for an AI to best follow these prompts. Make sure you don't oversimplify the character's thoughts with clichés, and leave room for deep and original reflections that could draw from lesser-known ideas of the author.
-       - about ${state.initialization.firstCharacterName}'s role: ${state.initialization.firstCharacterRole}
-       - about ${state.initialization.secondCharacterName}'s role: ${state.initialization.secondCharacterRole}
+    - Here's what is said about their character at this stage. Take it up, reflect on it and now complete and improve it so that each prompt is more precise and meets the criteria mentioned above and all the criteria you deem good for an AI to best follow these prompts. Make sure you don't oversimplify the character's thoughts with clichés, and leave room for deep and original reflections that could draw from lesser-known ideas of the author.
+       - about ${state.debateSettings.bot1.name}'s description: ${state.debateSettings.bot1.description}
+       - about ${state.debateSettings.bot2.name}'s description: ${state.debateSettings.bot2.description}
 
-    The response will be in JSON format. Write your prompt for ${state.initialization.firstCharacterName} in the "firstCharacterRole" key, and for ${state.initialization.secondCharacterName} in the "secondCharacterRole" key.`;
+    The response will be in JSON format. Write your prompt for ${state.debateSettings.bot1.name} in the "firstCharacterPrompt" key, and for ${state.debateSettings.bot2.name} in the "secondCharacterPrompt" key.`;
 
   const structuredLlm = getLlm(
     config?.configurable?.moderatorModel,
     z.object({
-      firstCharacterRole: z.string(),
-      secondCharacterRole: z.string(),
+      firstCharacterPrompt: z.string(),
+      secondCharacterPrompt: z.string(),
     }),
   );
 
   const response = await structuredLlm.invoke(systemMessage);
 
+  const debateSettings = state.debateSettings;
+
+  debateSettings.bot1.description = response.firstCharacterPrompt;
+  debateSettings.bot2.description = response.secondCharacterPrompt;
+
   return {
     messages: [
-      `Now we will discuss about the following topic: ${state.initialization.conversationTopic}`,
+      `Hi! It's a pleasure to meet you! Now we will discuss about the following topic: ${state.debateSettings.topic}. Please ${state.debateSettings.bot1.name}, open the conversation however you see fit!`,
     ],
-    initialization: {
-      firstCharacterRole: response.firstCharacterRole,
-      secondCharacterRole: response.secondCharacterRole,
-    },
+    debateSettings,
   };
 }
 
@@ -165,9 +159,12 @@ export async function firstChatBotNode(
 ): Promise<Update> {
   const systemMessage = {
     role: "system",
-    content: `You're taking part in a lively discussion about ${state.initialization.conversationTopic}, playing the role of ${state.initialization.firstCharacterName} (and you play only it's role). Your main conversation partner is ${state.initialization.secondCharacterName} (but you don't play it's role).
+    content: `You're taking part in a lively discussion about ${state.debateSettings.topic}, playing the role of ${state.debateSettings.bot1.name} (and you play only it's role). Your main conversation partner is ${state.debateSettings.bot2.name} (but you don't play it's role).
     
-    More precisely, you will play the following role: ${state.initialization.firstCharacterRole}.
+    More precisely, 
+    - you will mostly play this role in the debate: ${state.debateSettings.bot1.role || ""}
+
+    - to properly embody your character, follow mostly this instructions: ${state.debateSettings.bot1.description}
         
     ${dialogInstructions}`,
   };
@@ -177,20 +174,26 @@ export async function firstChatBotNode(
   const llm = getLlm(config?.configurable?.bot1Model);
   const response = await llm.invoke(messages);
   state.messages = [response];
-  state.initialization.sourceSpeaker = "Bot1";
-  return state;
+  const turn = state.turn || { sourceSpeaker: "Human" };
+  turn.sourceSpeaker = "Bot1";
+  turn.targetSpeaker = "Bot2";
+  return {
+    messages: [response],
+    turn,
+  };
 }
 
 export async function secondChatBotNode(state: State, config?: RunnableConfig) {
   const systemMessage = {
     role: "system",
-    content: `You're taking part in a lively discussion about ${state.initialization.conversationTopic}, playing the role of ${state.initialization.secondCharacterName} (and you play only it's role). Your main conversation partner is ${state.initialization.firstCharacterName} (but you don't play it's role).
+    content: `You're taking part in a lively discussion about ${state.debateSettings.topic}, playing the role of ${state.debateSettings.bot2.name} (and you play only it's role). Your main conversation partner is ${state.debateSettings.bot1.name} (but you don't play it's role).
   
-    More precisely, you will play the following role: ${state.initialization.secondCharacterRole}.
+     More precisely, 
+    - you will mostly play this role in the debate: ${state.debateSettings.bot2.role || ""}
+    
+    - to properly embody your character, follow mostly this instructions: ${state.debateSettings.bot2.description}
 
-    If you want to stop the conversation with ${state.initialization.firstCharacterName} because you feel like we're going in circles, you must respond only with a single word: "FINISHED".
-
-${dialogInstructions}`,
+    ${dialogInstructions}`,
   };
 
   const llm = getLlm(config?.configurable?.bot2Model);
@@ -199,13 +202,13 @@ ${dialogInstructions}`,
   //   await delay(5000)
   const response = await llm.invoke(messages);
 
-  state.messages = [response];
-  state.initialization.sourceSpeaker = "Bot2";
-  return state;
-  //   return {
-  //     messages: [response],
-  //     // initialization: state.initialization,
-  //   };
+  const turn = state.turn;
+  turn.targetSpeaker = "Bot1";
+  turn.sourceSpeaker = "Bot2";
+  return {
+    messages: [response],
+    turn,
+  };
 }
 
 export async function humanInput(state: State) {
@@ -215,30 +218,35 @@ export async function humanInput(state: State) {
 export async function moderation(state: State, config?: RunnableConfig) {
   const messages = state.messages;
   const lastMessage = messages.at(-1);
+  const turn = state.turn;
   let response;
   if (lastMessage?.constructor.name === "HumanMessage") {
-    if (lastMessage.content === ">") state.messages.pop();
-    else {
+    if (lastMessage.content === ">") {
+      state.messages.pop();
+    } else {
       const length = messages.length;
-      let recentConversation: string = "Human: " + messages[length - 1];
-      for (let i = 0; i < 3; i++) {
+      let recentConversation: string =
+        (state.debateSettings.userName || "Human") +
+        ": " +
+        messages[length - 1].content;
+      for (let i = 1; i < 3; i++) {
         if (i > length) break;
         recentConversation =
-          "\n\n" + messages[length - 1 - i].content + recentConversation;
+          messages[length - 1 - i].content + "\n\n" + recentConversation;
       }
       recentConversation.trim();
 
       const systemMessage = `
         CONTEXT:
-        The goal, based on what you're going to answer, is to lead an engaging and thought-provoking debate about ${state.initialization.conversationTopic} between the user, namely ${state.initialization.userName}, and two characters: ${state.initialization.firstCharacterName} and ${state.initialization.secondCharacterName} (an AI is simulating their role).
+        The goal, based on what you're going to answer, is to lead an engaging and thought-provoking debate about ${state.debateSettings.topic} between the user, namely ${state.debateSettings.userName}, and two characters: ${state.debateSettings.bot1.name} and ${state.debateSettings.bot2.name} (an AI is simulating their role).
 
         YOUR JOB:
-        From the last contribution to the debate and the last response of the human user, determine which character the message written by the human is addressed to, or in other words, who should speak in the next round of the debate. Your response will be recorded in the JSON key "targetSpeaker": if it's ${state.initialization.firstCharacterName}, answer with "Bot1", if it's ${state.initialization.secondCharacterName}, answer with "Bot2"
+        From the last contribution to the debate and the last response of the human user, determine which character the message written by the human is addressed to, or in other words, who should speak in the next round of the debate. Your response will be recorded in the JSON key "targetSpeaker": if it's ${state.debateSettings.bot1.name}, answer with "Bot1" (not it's name!), if it's ${state.debateSettings.bot2.name}, answer with "Bot2" (not it's name!)
         
         3 last contribution (at most) in the debate:
         ${recentConversation} 
         `;
-      // , if it's ${state.initialization.userName}, answer with "Human"
+      // , if it's ${state.debateSettings.userName}, answer with "Human"
 
       console.log(systemMessage);
 
@@ -250,23 +258,25 @@ export async function moderation(state: State, config?: RunnableConfig) {
       );
 
       response = await structuredLlm.invoke(systemMessage);
-
-      console.log("response :>> ", response);
-      response && (state.initialization.targetSpeaker = response.targetSpeaker);
-      state.initialization.sourceSpeaker = "Human";
+      if (!response.targetSpeaker.includes("Bot"))
+        turn.targetSpeaker = turn.sourceSpeaker === "Bot1" ? "Bot2" : "Bot1";
+      response && (turn.targetSpeaker = response.targetSpeaker);
+      turn.sourceSpeaker = "Human";
     }
   }
 
-  return state;
+  return {
+    turn,
+  };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// function delay(ms: number): Promise<void> {
+//   return new Promise((resolve) => setTimeout(resolve, ms));
+// }
 
-function updateNodeMetadata(state: State) {
-  const previousNode = state.metadata.currentNode || "start";
-  state.metadata.previousNode = previousNode;
-  state.metadata.currentNode = "myNode";
-  return state;
-}
+// function updateNodeMetadata(state: State) {
+//   const previousNode = state.metadata.currentNode || "start";
+//   state.metadata.previousNode = previousNode;
+//   state.metadata.currentNode = "myNode";
+//   return state;
+// }

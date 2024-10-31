@@ -7,31 +7,35 @@ import {
 } from "@langchain/langgraph";
 import { MessagesAnnotation } from "@langchain/langgraph";
 import {
+  characterDefiner,
   firstChatBotNode,
   humanInput,
   initialization,
   moderation,
-  roleDefiner,
   secondChatBotNode,
 } from "./nodes.js";
 import {
-  initOrContinue,
   lauchConversation,
   nextSpeaker,
-  shouldContinue,
   verifyInitialization,
 } from "./edges.js";
-import { BaseMessage } from "@langchain/core/messages";
 
-export type Initialization = {
-  // messages: BaseMessage[];
-  conversationTopic: string;
+export type DebateSettings = {
+  topic: string;
   userName: string;
-  firstCharacterName: string;
-  firstCharacterRole: string;
-  secondCharacterName: string;
-  secondCharacterRole: string;
+  bot1: {
+    name: string;
+    description?: string;
+    role?: string;
+  };
+  bot2: {
+    name: string;
+    description?: string;
+    role?: string;
+  };
   isInitialized: boolean;
+};
+export type Turn = {
   sourceSpeaker: string;
   targetSpeaker: string;
 };
@@ -44,8 +48,8 @@ type Metadata = {
 
 export const StateAnnotation = Annotation.Root({
   ...MessagesAnnotation.spec,
-  initialization: Annotation<Initialization>,
-  metadata: Annotation<Metadata>,
+  debateSettings: Annotation<DebateSettings>,
+  turn: Annotation<Turn>,
 });
 
 export type State = typeof StateAnnotation.State;
@@ -64,17 +68,17 @@ const ConfigurableAnnotation = Annotation.Root({
 export const workflow = new StateGraph(StateAnnotation, ConfigurableAnnotation)
   // node pour définir le thème et les rôle,
   // qui boucle tant que le thème n'a pas été bien défini
-  .addNode("Initialization", initialization)
-  .addNode("RoleDefiner", roleDefiner)
+  .addNode("DebateSetting", initialization)
+  .addNode("CharacterDefiner", characterDefiner)
   .addNode("Bot1", firstChatBotNode)
   .addNode("Bot2", secondChatBotNode)
   .addNode("Human", humanInput)
   .addNode("Moderator", moderation)
 
   // .addConditionalEdges(START, initOrContinue)
-  .addEdge("__start__", "Initialization")
-  .addConditionalEdges("Initialization", verifyInitialization)
-  .addConditionalEdges("RoleDefiner", lauchConversation)
+  .addEdge(START, "DebateSetting")
+  .addConditionalEdges("DebateSetting", verifyInitialization)
+  .addConditionalEdges("CharacterDefiner", lauchConversation)
   .addEdge("Bot1", "Human")
   .addEdge("Bot2", "Human")
   .addEdge("Human", "Moderator")
