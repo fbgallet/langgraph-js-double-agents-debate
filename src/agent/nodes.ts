@@ -6,6 +6,7 @@ import { AIMessage } from "@langchain/core/messages";
 import { z } from "zod";
 import { State, Update } from "./graph.js";
 import { StructuredOutputType } from "@langchain/core/language_models/base";
+import { createReadingDelay } from "../util/util.js";
 
 const getLlm = (
   model = "gpt-4o-mini",
@@ -18,7 +19,7 @@ const getLlm = (
   } else {
     llm = new ChatAnthropic({
       model,
-      temperature: 0.8,
+      temperature: 0.7,
     });
     schema && (llm = llm.withStructuredOutput(schema));
   }
@@ -60,7 +61,9 @@ export async function initialization(
     - user name: if the user hasn't introduced themselves, you will at least ask for their first name.
     - the specific role played by each character in the debate is optional, not required information. By default, each character will simply play their own role. Without further details, leave an empty string "" in the "bot1Role" and "bot2Role" keys. However, ask the user if they want to assign a particular role to each character. Suggest these possible roles as examples: the questioner, the arguer, the one with sharp critical thinking, the one who always emphasizes practical application of the ideas discussed, or the one who shows imagination in proposing examples or thought experiments, etc.
 
-    OUTPUT: Each of our responses will be in JSON format, following the provided schema. The language used will always be the same as the language used by the human user in its messsages,`,
+    OUTPUT: Each of our responses will be in JSON format, following the provided schema.
+
+    IMPORTANT: ${config?.configurable?.language === "french" ? "Formule tous tes éléments de réponse exclusivement en FRANCAIS, dans un français clair et correct." : "The language used will always be the same as the language used by the human user in its messsages."}`,
   };
   const allMessages = [systemMessage, ...state.messages];
 
@@ -109,8 +112,9 @@ export async function initialization(
       },
       isInitialized: response.isInitialized,
     },
+    messages: [response.message],
   };
-  response.isInitialized && (response.messages = [response.message]);
+  // response.isInitialized && (response.messages = [response.message]);
   return updatedState;
 }
 
@@ -147,7 +151,10 @@ export async function characterDefiner(state: State, config?: RunnableConfig) {
 
   return {
     messages: [
-      `Hi! It's a pleasure to meet you! Now we will discuss about the following topic: ${state.debateSettings.topic}. Please ${state.debateSettings.bot1.name}, open the conversation however you see fit!`,
+      state.debateSettings.userName +
+        (config?.configurable?.language === "french"
+          ? `: Bonjour! C'est un plaisir de vous rencontrer! Nous allons discuter de manière policée et argumentée du sujet suivant: "${state.debateSettings.topic}. Je vous en prie, ${state.debateSettings.bot1.name}, ouvrez la conversation de la manière qui vous conviendra !`
+          : `: Hi! It's a pleasure to meet you! Now we will discuss about the following topic: ${state.debateSettings.topic}. Please ${state.debateSettings.bot1.name}, open the conversation however you see fit!`),
     ],
     debateSettings,
   };
@@ -159,14 +166,16 @@ export async function firstChatBotNode(
 ): Promise<Update> {
   const systemMessage = {
     role: "system",
-    content: `You're taking part in a lively discussion about ${state.debateSettings.topic}, playing the role of ${state.debateSettings.bot1.name} (and you play only it's role). Your main conversation partner is ${state.debateSettings.bot2.name} (but you don't play it's role).
+    content: `You're taking part in a lively discussion about ${state.debateSettings.topic}, playing the role of ${state.debateSettings.bot1.name} (and you play always and ONLY it's role!). Your main conversation partner are ${state.debateSettings.bot2.name} and ${state.debateSettings.userName} (and you NEVER play their role!).
     
     More precisely, 
     - you will mostly play this role in the debate: ${state.debateSettings.bot1.role || ""}
 
     - to properly embody your character, follow mostly this instructions: ${state.debateSettings.bot1.description}
         
-    ${dialogInstructions}`,
+    ${dialogInstructions}
+    
+    IMPORTANT: ${config?.configurable?.language === "french" ? "Formule tous tes éléments de réponse exclusivement en FRANCAIS, dans un français clair et correct." : "The language used will always be the same as the language used by the human user in its messsages."}`,
   };
 
   const messages = [systemMessage, ...state.messages];
@@ -176,7 +185,7 @@ export async function firstChatBotNode(
   state.messages = [response];
   const turn = state.turn || { sourceSpeaker: "Human" };
   turn.sourceSpeaker = "Bot1";
-  turn.targetSpeaker = "Bot2";
+  turn.targetSpeaker = "to be defined";
   return {
     messages: [response],
     turn,
@@ -186,14 +195,16 @@ export async function firstChatBotNode(
 export async function secondChatBotNode(state: State, config?: RunnableConfig) {
   const systemMessage = {
     role: "system",
-    content: `You're taking part in a lively discussion about ${state.debateSettings.topic}, playing the role of ${state.debateSettings.bot2.name} (and you play only it's role). Your main conversation partner is ${state.debateSettings.bot1.name} (but you don't play it's role).
+    content: `You're taking part in a lively discussion about ${state.debateSettings.topic}, playing the role of ${state.debateSettings.bot2.name} (and you play always and ONLY it's role!). Your main conversation partner are ${state.debateSettings.bot1.name} and ${state.debateSettings.userName} (and you NEVER play their role!).
   
      More precisely, 
     - you will mostly play this role in the debate: ${state.debateSettings.bot2.role || ""}
     
     - to properly embody your character, follow mostly this instructions: ${state.debateSettings.bot2.description}
 
-    ${dialogInstructions}`,
+    ${dialogInstructions}
+    
+    IMPORTANT: ${config?.configurable?.language === "french" ? "Formule tous tes éléments de réponse exclusivement en FRANCAIS, dans un français clair et correct." : "The language used will always be the same as the language used by the human user in its messsages."}`,
   };
 
   const llm = getLlm(config?.configurable?.bot2Model);
@@ -203,7 +214,7 @@ export async function secondChatBotNode(state: State, config?: RunnableConfig) {
   const response = await llm.invoke(messages);
 
   const turn = state.turn;
-  turn.targetSpeaker = "Bot1";
+  turn.targetSpeaker = "to be defined";
   turn.sourceSpeaker = "Bot2";
   return {
     messages: [response],
@@ -212,7 +223,8 @@ export async function secondChatBotNode(state: State, config?: RunnableConfig) {
 }
 
 export async function humanInput(state: State) {
-  return state;
+  state.turn.sourceSpeaker = "Human";
+  return { ...state };
 }
 
 export async function moderation(state: State, config?: RunnableConfig) {
@@ -220,53 +232,76 @@ export async function moderation(state: State, config?: RunnableConfig) {
   const lastMessage = messages.at(-1);
   const turn = state.turn;
   let response;
-  if (lastMessage?.constructor.name === "HumanMessage") {
-    if (lastMessage.content === ">") {
-      state.messages.pop();
-    } else {
-      const length = messages.length;
-      let recentConversation: string =
-        (state.debateSettings.userName || "Human") +
-        ": " +
-        messages[length - 1].content;
-      for (let i = 1; i < 3; i++) {
-        if (i > length) break;
-        recentConversation =
-          messages[length - 1 - i].content + "\n\n" + recentConversation;
-      }
-      recentConversation.trim();
 
-      const systemMessage = `
-        CONTEXT:
-        The goal, based on what you're going to answer, is to lead an engaging and thought-provoking debate about ${state.debateSettings.topic} between the user, namely ${state.debateSettings.userName}, and two characters: ${state.debateSettings.bot1.name} and ${state.debateSettings.bot2.name} (an AI is simulating their role).
-
-        YOUR JOB:
-        From the last contribution to the debate and the last response of the human user, determine which character the message written by the human is addressed to, or in other words, who should speak in the next round of the debate. Your response will be recorded in the JSON key "targetSpeaker": if it's ${state.debateSettings.bot1.name}, answer with "Bot1" (not it's name!), if it's ${state.debateSettings.bot2.name}, answer with "Bot2" (not it's name!)
-        
-        3 last contribution (at most) in the debate:
-        ${recentConversation} 
-        `;
-      // , if it's ${state.debateSettings.userName}, answer with "Human"
-
-      console.log(systemMessage);
-
-      const structuredLlm = getLlm(
-        config?.configurable?.moderatorModel,
-        z.object({
-          targetSpeaker: z.string().describe("Bot1|Bot2"),
-        }),
-      );
-
-      response = await structuredLlm.invoke(systemMessage);
-      if (!response.targetSpeaker.includes("Bot"))
-        turn.targetSpeaker = turn.sourceSpeaker === "Bot1" ? "Bot2" : "Bot1";
-      response && (turn.targetSpeaker = response.targetSpeaker);
-      turn.sourceSpeaker = "Human";
+  // if (lastMessage?.constructor.name === "HumanMessage") {
+  if (lastMessage?.content === ">") {
+    state.messages.pop();
+  } else {
+    const length = messages.length;
+    let recentConversation: string =
+      state.debateSettings.userName + ": " + messages[length - 1].content;
+    for (let i = 1; i < 3; i++) {
+      if (i > length) break;
+      recentConversation =
+        messages[length - 1 - i].content + "\n\n-----\n" + recentConversation;
     }
+    recentConversation.trim();
+
+    const systemMessage = `
+        YOUR JOB:
+        Given the lasts contributions to the debate provided below (each separated by '-----'), determine to which participant the last message was mainly addressed to or, more precisely, WHO SHOULD SPEAK IN THE NEXT ROUND of the debate (the target speaker). Of course the one who is speaking in the last message cannot be the one who is expected to speak in the next round! When the author of the last message addresses one of the other participants explicitly and directly, the choice of the target speaker is obvious.
+        
+        Make sure you don't confuse who is being referred to because part of the last message is a response to what they previously said, and who is named as the recipient from whom a response is expected. It's the one from whom a response is expected that needs to be identified as the target speaker.
+
+        Your response will be recorded in the JSON key "targetSpeaker": ${state.debateSettings.bot1.name} will be referred as "Bot1", ${state.debateSettings.bot2.name} as "Bot2" and ${state.debateSettings.userName}, as "Human".
+        
+        Here are the 3 (at most) last contributions in the debate:
+        ${recentConversation}`;
+
+    console.log(systemMessage);
+
+    const structuredLlm = getLlm(
+      config?.configurable?.moderatorModel,
+      z.object({
+        targetSpeaker: z.string().describe("Bot1|Bot2|Human"),
+      }),
+    );
+
+    const source = turn.targetSpeaker;
+    response = await structuredLlm.invoke(systemMessage);
+    // if (!response.targetSpeaker.includes("Bot"))
+    //   turn.targetSpeaker = turn.sourceSpeaker === "Bot1" ? "Bot2" : "Bot1";
+    console.log("response :>> ", response);
+    response && (turn.targetSpeaker = response.targetSpeaker);
+    //turn.sourceSpeaker = "Human";
+    // }
+
+    const target = turn.targetSpeaker.toLowerCase().trim();
+    if (
+      target === "bot1" ||
+      target === state.debateSettings.bot1.name.toLowerCase() ||
+      target.includes("1")
+    )
+      turn.targetSpeaker = "Bot1";
+    else if (
+      target === "bot2" ||
+      target === state.debateSettings.bot2.name.toLowerCase() ||
+      target.includes("2")
+    )
+      turn.targetSpeaker = "Bot2";
+    else turn.targetSpeaker = "Human";
+    if (turn.targetSpeaker === turn.sourceSpeaker) turn.targetSpeaker = "Human";
+
+    console.log("state.turn in moderation, AFTER :>> ", turn);
+
+    !(turn.targetSpeaker === "Human" || source === "Human") &&
+      (await createReadingDelay(
+        JSON.stringify(state.messages[state.messages.length - 1].content),
+      ));
   }
 
   return {
-    turn,
+    turn: { ...turn },
   };
 }
 

@@ -55,13 +55,20 @@ export const StateAnnotation = Annotation.Root({
 export type State = typeof StateAnnotation.State;
 export type Update = typeof StateAnnotation.Update;
 
-type AvailableModels = "gpt-4o-mini" | "gpt-4o" | "claude-3-5-sonnet-20241022";
+type AvailableModels =
+  | "gpt-4o-mini"
+  | "gpt-4o"
+  | "claude-3-5-sonnet-20241022"
+  | "claude-3-5-haiku-20241022";
 export const defaultModel = "gpt-4o-mini";
 
+type AvailableLanguages = "english" | "french";
+
 const ConfigurableAnnotation = Annotation.Root({
-  moderatorModel: Annotation<AvailableModels>,
+  language: Annotation<AvailableLanguages>,
   bot1Model: Annotation<AvailableModels>,
   bot2Model: Annotation<AvailableModels>,
+  moderatorModel: Annotation<AvailableModels>,
   botsOnly: Annotation<boolean>,
 });
 
@@ -79,8 +86,8 @@ export const workflow = new StateGraph(StateAnnotation, ConfigurableAnnotation)
   .addEdge(START, "DebateSetting")
   .addConditionalEdges("DebateSetting", verifyInitialization)
   .addConditionalEdges("CharacterDefiner", lauchConversation)
-  .addEdge("Bot1", "Human")
-  .addEdge("Bot2", "Human")
+  .addEdge("Bot1", "Moderator")
+  .addEdge("Bot2", "Moderator")
   .addEdge("Human", "Moderator")
   .addConditionalEdges("Moderator", nextSpeaker);
 
